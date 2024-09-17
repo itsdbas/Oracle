@@ -1,1 +1,3 @@
 # Oracle
+
+Postgres side of the things...
