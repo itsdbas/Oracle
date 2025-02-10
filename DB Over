@@ -26,7 +26,7 @@ while IFS=: read -r SID ORACLE_HOME AUTOSTART; do
 
     # Check if the instance is running
     STATUS=$($ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF
-SET HEADING OFF FEEDBACK OFF VERIFY OFF ECHO OFF
+SET HEADING OFF FEEDBACK OFF VERIFY OFF ECHO OFF;
 SELECT CASE WHEN status = 'OPEN' THEN 'RUNNING' ELSE 'NOT RUNNING' END FROM v\\$instance;
 EXIT;
 EOF
@@ -42,18 +42,18 @@ EOF
 
     # Get additional information in a single query
     INFO=$($ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF
-SET HEADING OFF FEEDBACK OFF VERIFY OFF ECHO OFF
+SET HEADING OFF FEEDBACK OFF VERIFY OFF ECHO OFF;
 SELECT 
-    (SELECT version FROM v\\$instance),
-    (SELECT db_unique_name FROM v\\$database),
-    (SELECT archiver FROM v\\$instance),
-    (SELECT log_mode FROM v\\$database),
-    (SELECT database_role FROM v\\$database),
-    (SELECT protection_mode FROM v\\$database),
-    NVL((SELECT sync_status FROM v\\$archive_dest_status WHERE dest_id = 2 AND status = 'VALID' FETCH FIRST 1 ROW ONLY), 'N/A'),
+    (SELECT version FROM v\\$instance) AS version,
+    (SELECT db_unique_name FROM v\\$database) AS db_name,
+    (SELECT archiver FROM v\\$instance) AS archiver_status,
+    (SELECT log_mode FROM v\\$database) AS log_mode,
+    (SELECT database_role FROM v\\$database) AS role,
+    (SELECT protection_mode FROM v\\$database) AS protection_mode,
+    NVL((SELECT sync_status FROM v\\$archive_dest_status WHERE dest_id = 2 AND status = 'VALID' AND rownum = 1), 'N/A') AS dg_sync,
     NVL((SELECT ROUND((space_used / space_limit) * 100, 2) || '%' || ' (' || space_limit/1024/1024 || ' MB)' 
-         FROM v\\$recovery_file_dest), 'N/A'),
-    NVL((SELECT ROUND(value / 1024 / 1024, 2) || ' MB' FROM v\\$parameter WHERE name = 'sga_target'), 'N/A')
+         FROM v\\$recovery_file_dest), 'N/A') AS fra_usage,
+    NVL((SELECT ROUND(value / 1024 / 1024, 2) || ' MB' FROM v\\$parameter WHERE name = 'sga_target'), 'N/A') AS sga_size
 FROM dual;
 EXIT;
 EOF
