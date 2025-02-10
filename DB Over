@@ -1,0 +1,79 @@
+#!/bin/bash
+
+# Define the location of the oratab file
+ORATAB="/etc/oratab"
+
+# Check if the oratab file exists
+if [[ ! -f $ORATAB ]]; then
+    echo "Error: oratab file not found at $ORATAB"
+    exit 1
+fi
+
+# Print header for the output
+echo -e "Instance\tStatus\tVersion\tDatabase\tArch\tLog Mode\tRole\tProtection Mode\tDG Sync\tFRA Usage\tSGA Size"
+echo -e "--------\t------\t-------\t---------\t----\t--------\t----\t---------------\t-------\t--------\t--------"
+
+# Loop through each entry in the oratab file
+while IFS=: read -r SID ORACLE_HOME AUTOSTART; do
+    # Skip comments and empty lines
+    [[ "$SID" =~ ^#.* ]] && continue
+    [[ -z "$SID" || -z "$ORACLE_HOME" ]] && continue
+
+    # Set Oracle environment variables
+    export ORACLE_SID=$SID
+    export ORACLE_HOME=$ORACLE_HOME
+    export PATH=$ORACLE_HOME/bin:$PATH
+
+    # Check if the instance is running
+    STATUS=$($ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF
+SET HEADING OFF FEEDBACK OFF VERIFY OFF ECHO OFF
+SELECT CASE WHEN status = 'OPEN' THEN 'RUNNING' ELSE 'NOT RUNNING' END FROM v\\$instance;
+EXIT;
+EOF
+)
+
+    STATUS=$(echo "$STATUS" | xargs) # Trim whitespace
+
+    # If status is empty, the database is not running
+    if [[ -z "$STATUS" || "$STATUS" == "NOT RUNNING" ]]; then
+        echo -e "$SID\tNOT RUNNING\tN/A\tN/A\tN/A\tN/A\tN/A\tN/A\tN/A\tN/A\tN/A"
+        continue
+    fi
+
+    # Get additional information in a single query
+    INFO=$($ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF
+SET HEADING OFF FEEDBACK OFF VERIFY OFF ECHO OFF
+SELECT 
+    (SELECT version FROM v\\$instance),
+    (SELECT db_unique_name FROM v\\$database),
+    (SELECT archiver FROM v\\$instance),
+    (SELECT log_mode FROM v\\$database),
+    (SELECT database_role FROM v\\$database),
+    (SELECT protection_mode FROM v\\$database),
+    NVL((SELECT sync_status FROM v\\$archive_dest_status WHERE dest_id = 2 AND status = 'VALID' FETCH FIRST 1 ROW ONLY), 'N/A'),
+    NVL((SELECT ROUND((space_used / space_limit) * 100, 2) || '%' || ' (' || space_limit/1024/1024 || ' MB)' 
+         FROM v\\$recovery_file_dest), 'N/A'),
+    NVL((SELECT ROUND(value / 1024 / 1024, 2) || ' MB' FROM v\\$parameter WHERE name = 'sga_target'), 'N/A')
+FROM dual;
+EXIT;
+EOF
+)
+
+    # Parse the output into variables
+    INFO=($(echo "$INFO" | xargs))
+    VERSION=${INFO[0]:-"N/A"}
+    DB_UNIQUE_NAME=${INFO[1]:-"N/A"}
+    ARCHIVER_STATUS=${INFO[2]:-"N/A"}
+    LOG_MODE=${INFO[3]:-"N/A"}
+    ROLE=${INFO[4]:-"N/A"}
+    PROTECTION_MODE=${INFO[5]:-"N/A"}
+    DG_SYNC_STATUS=${INFO[6]:-"N/A"}
+    FRA_USAGE=${INFO[7]:-"N/A"}
+    SGA_SIZE=${INFO[8]:-"N/A"}
+
+    # Print instance details
+    echo -e "$SID\t$STATUS\t$VERSION\t$DB_UNIQUE_NAME\t$ARCHIVER_STATUS\t$LOG_MODE\t$ROLE\t$PROTECTION_MODE\t$DG_SYNC_STATUS\t$FRA_USAGE\t$SGA_SIZE"
+
+done < "$ORATAB"
+
+echo -e "\nOverview complete."
