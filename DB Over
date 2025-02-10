@@ -1,56 +1,39 @@
 #!/bin/bash
 
-# Define the location of the oratab file
-ORATAB="/etc/oratab"
+# Set Oracle environment variables
+export ORACLE_SID=YOUR_SID_HERE  # Change this to your database SID
+export ORACLE_HOME=YOUR_ORACLE_HOME_HERE  # Change this to your ORACLE_HOME
+export PATH=$ORACLE_HOME/bin:$PATH
 
-# Check if the oratab file exists
-if [[ ! -f $ORATAB ]]; then
-    echo "Error: oratab file not found at $ORATAB"
-    exit 1
-fi
-
-# Print header for the output
-echo -e "Instance\tStatus\tVersion\tDatabase\tArch\tLog Mode\tRole\tProtection Mode\tDG Sync\tFRA Usage\tSGA Size"
-echo -e "--------\t------\t-------\t---------\t----\t--------\t----\t---------------\t-------\t--------\t--------"
-
-# Loop through each entry in the oratab file
-while IFS=: read -r SID ORACLE_HOME AUTOSTART; do
-    # Skip comments and empty lines
-    [[ "$SID" =~ ^#.* ]] && continue
-    [[ -z "$SID" || -z "$ORACLE_HOME" ]] && continue
-
-    # Set Oracle environment variables
-    export ORACLE_SID=$SID
-    export ORACLE_HOME=$ORACLE_HOME
-    export PATH=$ORACLE_HOME/bin:$PATH
-
-    # Check if the instance is running
-    STATUS=$($ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF
+# Check if the database is running
+STATUS=$($ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF
 SET HEADING OFF FEEDBACK OFF VERIFY OFF ECHO OFF;
 SELECT CASE WHEN status = 'OPEN' THEN 'RUNNING' ELSE 'NOT RUNNING' END FROM v\\$instance;
 EXIT;
 EOF
 )
 
-    STATUS=$(echo "$STATUS" | xargs) # Trim whitespace
+STATUS=$(echo "$STATUS" | xargs)  # Trim whitespace
 
-    # If status is empty, the database is not running
-    if [[ -z "$STATUS" || "$STATUS" == "NOT RUNNING" ]]; then
-        echo -e "$SID\tNOT RUNNING\tN/A\tN/A\tN/A\tN/A\tN/A\tN/A\tN/A\tN/A\tN/A"
-        continue
-    fi
+# If status is empty, assume database is not running
+if [[ -z "$STATUS" || "$STATUS" == "NOT RUNNING" ]]; then
+    echo -e "SID\tSTATUS\tVERSION\tDB_UNIQUE_NAME\tARCHIVER_STATUS\tLOG_MODE\tROLE\tPROTECTION_MODE\tDG_SYNC_STATUS\tFRA_USAGE\tSGA_SIZE"
+    echo -e "$ORACLE_SID\tNOT RUNNING\tN/A\tN/A\tN/A\tN/A\tN/A\tN/A\tN/A\tN/A\tN/A"
+    exit 0
+fi
 
-    # Get additional information in a single query
-    INFO=$($ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF
+# Get database details
+INFO=$($ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF
 SET HEADING OFF FEEDBACK OFF VERIFY OFF ECHO OFF;
 SELECT 
+    (SELECT instance_name FROM v\\$instance) AS SID,
     (SELECT version FROM v\\$instance) AS version,
     (SELECT db_unique_name FROM v\\$database) AS db_name,
     (SELECT archiver FROM v\\$instance) AS archiver_status,
     (SELECT log_mode FROM v\\$database) AS log_mode,
     (SELECT database_role FROM v\\$database) AS role,
     (SELECT protection_mode FROM v\\$database) AS protection_mode,
-    NVL((SELECT sync_status FROM v\\$archive_dest_status WHERE dest_id = 2 AND status = 'VALID' AND rownum = 1), 'N/A') AS dg_sync,
+    NVL((SELECT sync_status FROM v\\$archive_dest_status WHERE dest_id = 2 AND status = 'VALID' AND rownum = 1), 'N/A') AS dg_sync_status,
     NVL((SELECT ROUND((space_used / space_limit) * 100, 2) || '%' || ' (' || space_limit/1024/1024 || ' MB)' 
          FROM v\\$recovery_file_dest), 'N/A') AS fra_usage,
     NVL((SELECT ROUND(value / 1024 / 1024, 2) || ' MB' FROM v\\$parameter WHERE name = 'sga_target'), 'N/A') AS sga_size
@@ -59,21 +42,20 @@ EXIT;
 EOF
 )
 
-    # Parse the output into variables
-    INFO=($(echo "$INFO" | xargs))
-    VERSION=${INFO[0]:-"N/A"}
-    DB_UNIQUE_NAME=${INFO[1]:-"N/A"}
-    ARCHIVER_STATUS=${INFO[2]:-"N/A"}
-    LOG_MODE=${INFO[3]:-"N/A"}
-    ROLE=${INFO[4]:-"N/A"}
-    PROTECTION_MODE=${INFO[5]:-"N/A"}
-    DG_SYNC_STATUS=${INFO[6]:-"N/A"}
-    FRA_USAGE=${INFO[7]:-"N/A"}
-    SGA_SIZE=${INFO[8]:-"N/A"}
+# Parse output
+INFO=($(echo "$INFO" | xargs))
+SID=${INFO[0]:-"N/A"}
+VERSION=${INFO[1]:-"N/A"}
+DB_UNIQUE_NAME=${INFO[2]:-"N/A"}
+ARCHIVER_STATUS=${INFO[3]:-"N/A"}
+LOG_MODE=${INFO[4]:-"N/A"}
+ROLE=${INFO[5]:-"N/A"}
+PROTECTION_MODE=${INFO[6]:-"N/A"}
+DG_SYNC_STATUS=${INFO[7]:-"N/A"}
+FRA_USAGE=${INFO[8]:-"N/A"}
+SGA_SIZE=${INFO[9]:-"N/A"}
 
-    # Print instance details
-    echo -e "$SID\t$STATUS\t$VERSION\t$DB_UNIQUE_NAME\t$ARCHIVER_STATUS\t$LOG_MODE\t$ROLE\t$PROTECTION_MODE\t$DG_SYNC_STATUS\t$FRA_USAGE\t$SGA_SIZE"
+# Print results
+echo -e "SID\tSTATUS\tVERSION\tDB_UNIQUE_NAME\tARCHIVER_STATUS\tLOG_MODE\tROLE\tPROTECTION_MODE\tDG_SYNC_STATUS\tFRA_USAGE\tSGA_SIZE"
+echo -e "$SID\t$STATUS\t$VERSION\t$DB_UNIQUE_NAME\t$ARCHIVER_STATUS\t$LOG_MODE\t$ROLE\t$PROTECTION_MODE\t$DG_SYNC_STATUS\t$FRA_USAGE\t$SGA_SIZE"
 
-done < "$ORATAB"
-
-echo -e "\nOverview complete."
