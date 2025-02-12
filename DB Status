@@ -1,0 +1,83 @@
+#!/bin/bash
+
+# Oracle Database Overview Script
+# This script lists all Oracle databases running on the server with detailed information in a tabular format.
+
+# Set Oracle environment variables (if needed)
+# export ORACLE_HOME=/path/to/oracle_home
+# export PATH=$ORACLE_HOME/bin:$PATH
+
+# Function to check if Oracle processes are running
+check_oracle_processes() {
+    echo "Checking for Oracle processes..."
+    ps -ef | grep -E "ora_pmon|asm_pmon" | grep -v grep
+}
+
+# Function to get Oracle database details
+get_oracle_db_details() {
+    echo "Fetching Oracle database details..."
+    
+    # Print table header
+    printf "%-10s | %-10s | %-15s | %-15s | %-15s | %-12s | %-10s | %-20s | %-15s | %-15s | %-10s | %-10s\n" \
+        "SID" "STATUS" "VERSION" "DB_UNIQUE_NAME" "ARCHIVER_STATUS" "LOG_MODE" "ROLE" "PROTECTION_MODE" "DG_SYNC_STATUS" "FRA_USAGE" "SGA_SIZE" 
+    printf "%s\n" "----------------------------------------------------------------------------------------------------------------------------------------------------------------"
+
+    for ora_pid in $(ps -ef | grep -E "ora_pmon|asm_pmon" | grep -v grep | awk '{print $2}'); do
+        # Get ORACLE_SID from the process name
+        ora_sid=$(ps -ef | grep -E "ora_pmon_|asm_pmon_" | grep -v grep | awk '{print $NF}' | cut -d'_' -f3)
+
+        # Get ORACLE_HOME from the process environment
+        ora_home=$(ps -ef | grep -E "ora_pmon_$ora_sid|asm_pmon_$ora_sid" | grep -v grep | awk '{print $8}' | xargs dirname | xargs dirname)
+
+        # Get database version
+        db_version=$($ora_home/bin/sqlplus -v | grep "Release" | awk '{print $3}')
+
+        # Connect to the database and fetch details
+        db_details=$($ora_home/bin/sqlplus -s /nolog <<EOF
+        connect / as sysdba
+        set heading off
+        set feedback off
+        set pagesize 0
+        set linesize 200
+        select status from v\$instance;
+        select db_unique_name from v\$database;
+        select archiver from v\$instance;
+        select log_mode from v\$database;
+        select database_role from v\$database;
+        select protection_mode from v\$database;
+        select sync_status from v\$dataguard_stats;
+        select round((sum(percent_space_used) / count(*)), 2) || '%' from v\$recovery_area_usage;
+        select round(sum(value)/1024/1024, 2) || ' MB' from v\$sga;
+        exit
+EOF
+        )
+
+        # Parse the output into variables
+        status=$(echo "$db_details" | sed -n '1p')
+        db_unique_name=$(echo "$db_details" | sed -n '2p')
+        archiver_status=$(echo "$db_details" | sed -n '3p')
+        log_mode=$(echo "$db_details" | sed -n '4p')
+        role=$(echo "$db_details" | sed -n '5p')
+        protection_mode=$(echo "$db_details" | sed -n '6p')
+        dg_sync_status=$(echo "$db_details" | sed -n '7p')
+        fra_usage=$(echo "$db_details" | sed -n '8p')
+        sga_size=$(echo "$db_details" | sed -n '9p')
+
+        # Print table row
+        printf "%-10s | %-10s | %-15s | %-15s | %-15s | %-12s | %-10s | %-20s | %-15s | %-15s | %-10s | %-10s\n" \
+            "$ora_sid" "$status" "$db_version" "$db_unique_name" "$archiver_status" "$log_mode" "$role" "$protection_mode" "$dg_sync_status" "$fra_usage" "$sga_size"
+    done
+}
+
+# Main script execution
+echo "Oracle Database Overview Script"
+echo "==============================="
+
+# Check for Oracle processes
+check_oracle_processes
+
+# Get Oracle database details
+get_oracle_db_details
+
+echo "==============================="
+echo "Script execution completed."
