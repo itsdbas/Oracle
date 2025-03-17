@@ -1,0 +1,98 @@
+If you are running this query on a server hosting multiple instances (e.g., more than 10 SQL Server instances), you can modify the script slightly to ensure you gather information from all instances and display the details on the screen.
+
+Here's an explanation of the approach and adjustments you may need to make:
+
+---
+
+### **Challenges with Multiple Instances**
+1. **GV$INSTANCE View Behavior**:
+   - The `GV$INSTANCE` view is a global dynamic performance view designed to handle information across instances in a clustered or RAC (Real Application Clusters) setup.
+   - For servers running more than 10 instances **without RAC**, you would need to connect to each instance individually to fetch its details, as `GV$INSTANCE` will not consolidate data across unlinked instances.
+
+2. **Script Behavior**:
+   - If the server is running **RAC**, you can execute the provided script as is, and it will gather data across all linked instances.
+   - For non-RAC environments, you would need to iterate over each instance using a management tool, script, or external connection handling.
+
+---
+
+### **Modification for Multiple Instances**
+#### Option 1: **Using RAC (Clustered Instances)**
+If you are using RAC, the provided script will already fetch the details for all instances in the cluster. No modifications are needed.
+
+#### Option 2: **Non-RAC (Standalone Instances)**:
+If the instances are standalone:
+1. Create a list of instance connections.
+2. Use a script to loop through all instances and gather information.
+
+#### Example: Looping through Instances with SQL*Plus
+```bash
+#!/bin/bash
+
+# List of instance connections
+INSTANCE_LIST=("instance1_host" "instance2_host" "instance3_host" "instance4_host" ...)
+
+# Loop through each instance and run the query
+for INSTANCE in "${INSTANCE_LIST[@]}"
+do
+  echo "Connecting to $INSTANCE..."
+  sqlplus sys/password@$INSTANCE as sysdba <<EOF
+  SET LINESIZE 200
+  SET PAGESIZE 100
+  SELECT 
+      i.instance_name,
+      i.INSTANCE_ROLE,
+      i.STATUS AS Instance_Status,
+      i.DATABASE_STATUS,
+      i.host_name,
+      TO_CHAR(i.startup_time, 'MM/DD/YYYY HH24:MI:SS') AS "Startup_Time",
+      i.LOGINS,
+      d.name AS Database_Name,
+      d.open_mode,
+      d.database_role,
+      d.flashback_on,
+      d.log_mode,
+      m.sga_target AS SGA_Target_MB,
+      m.pga_aggregate_target AS PGA_Target_MB,
+      CASE 
+          WHEN i.status = 'MOUNTED' OR d.open_mode != 'READ WRITE' THEN 'Restart Required' 
+          ELSE 'No Restart Needed' 
+      END AS Restart_Status
+  FROM 
+      gv$instance i
+  CROSS JOIN 
+      v$database d
+  CROSS JOIN 
+      (SELECT 
+           ROUND(value / (1024 * 1024), 2) AS sga_target,
+           (SELECT ROUND(value / (1024 * 1024), 2) 
+            FROM v$parameter WHERE name = 'pga_aggregate_target') AS pga_aggregate_target
+       FROM v$parameter 
+       WHERE name = 'sga_target') m;
+  EXIT;
+EOF
+done
+```
+
+- **Explanation**:
+  - The `INSTANCE_LIST` variable contains the hostnames or connection strings of all instances.
+  - The script loops over each instance, connects using `sqlplus`, and runs the combined SQL query.
+  - Output is displayed on the screen for each instance.
+
+---
+
+### **Considerations**
+- **Environment**:
+  Ensure you have connectivity and credentials for all instances. If instances are on the same server but run as separate services, replace hostnames with instance connection strings.
+  
+- **Performance**:
+  Running queries across many instances may take time, so plan the script execution during non-peak hours.
+
+- **Output Storage**:
+  If you want to save the output for later analysis, modify the script to redirect results to a file:
+  ```bash
+  sqlplus sys/password@$INSTANCE as sysdba >> output.log
+  ```
+
+---
+
+With these adjustments, you can efficiently gather information from all instances on your server and display the results on-screen or store them for analysis. Let me know if you'd like further assistance crafting the script!
