@@ -18,7 +18,7 @@ fi
 echo "------------------------------------------------------------"
 echo "  ORACLE DATABASE STATUS REPORT  - $(date)"
 echo "------------------------------------------------------------"
-printf "%-15s %-10s %-12s %-15s %-15s %-12s\n" "DATABASE" "STATUS" "LOG_MODE" "UPTIME" "ARCHIVE_MODE" "ACTIVE_SESSIONS"
+printf "%-15s %-10s %-12s %-25s %-15s %-12s\n" "DATABASE" "STATUS" "LOG_MODE" "UPTIME" "ARCHIVE_MODE" "ACTIVE_SESSIONS"
 echo "------------------------------------------------------------"
 
 # Loop through each running database and check status
@@ -45,11 +45,14 @@ EXIT;
 EOF
   )
 
-  # Check Uptime
+  # Check Uptime with Corrected Query
   UPTIME=$(sqlplus -s / as sysdba <<EOF
 SET HEADING OFF;
 SET FEEDBACK OFF;
-SELECT TO_CHAR(sysdate-startup_time, 'HH24:MI:SS') FROM v\$instance;
+SELECT FLOOR(SYSDATE - STARTUP_TIME) || ' Days ' ||
+       TO_CHAR(TRUNC(MOD(SYSDATE - STARTUP_TIME,1) * 24), 'FM00') || ' Hours ' ||
+       TO_CHAR(TRUNC(MOD(MOD(SYSDATE - STARTUP_TIME,1) * 24,1) * 60), 'FM00') || ' Minutes'
+FROM V\$INSTANCE;
 EXIT;
 EOF
   )
@@ -73,7 +76,7 @@ EOF
   )
 
   # Display results in a formatted table
-  printf "%-15s %-10s %-12s %-15s %-15s %-12s\n" "$DB_NAME" "$STATUS" "$LOG_MODE" "$UPTIME" "$ARCHIVE_MODE" "$ACTIVE_SESSIONS"
+  printf "%-15s %-10s %-12s %-25s %-15s %-12s\n" "$DB_NAME" "$STATUS" "$LOG_MODE" "$UPTIME" "$ARCHIVE_MODE" "$ACTIVE_SESSIONS"
 done
 
 echo "------------------------------------------------------------"
