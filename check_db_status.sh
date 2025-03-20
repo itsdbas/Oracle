@@ -1,10 +1,18 @@
 #!/bin/bash
 
-# Set Oracle Environment Variables
+# Set Oracle Environment Variables (Update as per your setup)
 export ORACLE_HOME=/u01/app/oracle/product/19c/dbhome_1
-export ORACLE_BASE=/u01/app/oracle
 export PATH=$ORACLE_HOME/bin:$PATH
 export ORATAB=/etc/oratab
+
+# Get all running databases from PMON
+DB_LIST=$(ps -ef | grep pmon | grep -v grep | awk -F_ '{print $3}')
+
+# Check if any database is running
+if [[ -z "$DB_LIST" ]]; then
+  echo "No running Oracle databases found!"
+  exit 1
+fi
 
 # Header for Output
 echo "------------------------------------------------------------"
@@ -13,8 +21,8 @@ echo "------------------------------------------------------------"
 printf "%-15s %-10s %-12s %-15s %-15s %-12s\n" "DATABASE" "STATUS" "LOG_MODE" "UPTIME" "ARCHIVE_MODE" "ACTIVE_SESSIONS"
 echo "------------------------------------------------------------"
 
-# Loop through each running database in /etc/oratab
-grep -v '^#' $ORATAB | awk -F: '{print $1}' | while read DB_NAME
+# Loop through each running database and check status
+for DB_NAME in $DB_LIST
 do
   # Set ORACLE_SID
   export ORACLE_SID=$DB_NAME
