@@ -1,0 +1,234 @@
+Here’s a detailed, step-by-step guide for refreshing a 2-node Oracle RAC ASM production database to a 2-node Oracle RAC ASM development database using RMAN Active Duplicate in a Windows environment with zero downtime.
+
+🔥 Objective
+Refresh Dev RAC ASM database with Prod RAC ASM database
+
+Use RMAN Active Duplicate (no need for backup copy)
+
+Ensure zero downtime for Prod RAC
+
+Automate the refresh for a monthly schedule
+
+🚀 Prerequisites
+✅ Prod & Dev RAC environments on Windows
+✅ Both databases use ASM storage
+✅ Same Oracle version, OS, and patches on both
+✅ Dev RAC has sufficient disk space
+✅ TNS entries configured for Prod & Dev
+✅ Both clusters are properly networked
+✅ Archivelog mode enabled in Prod
+✅ Ensure ASM disk groups are named identically on both clusters
+
+🔵 Step 1: Prepare the Dev RAC Environment
+1.1. Stop the Dev Database
+On Dev Node 1, stop the database:
+
+powershell
+Copy
+Edit
+srvctl stop database -d DEVDB
+If needed, remove the existing ASM data:
+
+powershell
+Copy
+Edit
+asmcmd
+rm -rf +DATA/DEVDB/*
+rm -rf +FRA/DEVDB/*
+exit
+1.2. Create Required Directories on Dev
+On both Dev RAC nodes, create necessary directories:
+
+powershell
+Copy
+Edit
+mkdir C:\oracle\admin\DEVDB\adump
+mkdir C:\oracle\oradata\DEVDB
+mkdir C:\oracle\fra\DEVDB
+1.3. Set Up Password File on Dev
+Copy the password file from Prod to Dev for SYSDBA authentication:
+
+powershell
+Copy
+Edit
+scp \\PRODNODE1\C$\oracle\product\19.0.0\dbhome_1\database\PWDprod.ora \\DEVNODE1\C$\oracle\product\19.0.0\dbhome_1\database\PWDdev.ora
+Rename it on Dev:
+
+powershell
+Copy
+Edit
+ren PWDprod.ora PWDdev.ora
+🔴 Step 2: Configure RMAN Active Duplicate
+2.1. Start the Auxiliary Instance on Dev
+On Dev Node 1, set the environment variables:
+
+powershell
+Copy
+Edit
+set ORACLE_SID=DEVDB1
+set ORACLE_HOME=C:\oracle\product\19.0.0\dbhome_1
+Start the instance in NOMOUNT mode:
+
+sql
+Copy
+Edit
+sqlplus / as sysdba
+startup nomount pfile='C:\oracle\admin\DEVDB\initDEVDB.ora';
+If needed, create initDEVDB.ora:
+
+sql
+Copy
+Edit
+*.db_name='DEVDB'
+*.memory_target=4G
+*.control_files='+DATA/DEVDB/control01.ctl','+FRA/DEVDB/control02.ctl'
+2.2. Configure Static Listeners for Duplicate Process
+Edit listener.ora on both Dev nodes and add:
+
+plaintext
+Copy
+Edit
+SID_LIST_LISTENER =
+  (SID_LIST =
+    (SID_DESC =
+      (GLOBAL_DBNAME = DEVDB_DGMGRL)
+      (ORACLE_HOME = C:\oracle\product\19.0.0\dbhome_1)
+      (SID_NAME = DEVDB1)
+    )
+  )
+Reload the listener:
+
+powershell
+Copy
+Edit
+lsnrctl reload
+2.3. Add TNS Entry for Prod on Dev
+Update tnsnames.ora on Dev:
+
+plaintext
+Copy
+Edit
+PRODDB =
+  (DESCRIPTION =
+    (ADDRESS_LIST =
+      (ADDRESS = (PROTOCOL = TCP)(HOST = PROD-VIP1)(PORT = 1521))
+      (ADDRESS = (PROTOCOL = TCP)(HOST = PROD-VIP2)(PORT = 1521))
+    )
+    (CONNECT_DATA =
+      (SERVICE_NAME = PRODDB)
+    )
+  )
+Test the connection:
+
+powershell
+Copy
+Edit
+tnsping PRODDB
+🟢 Step 3: Execute RMAN Active Duplicate on Dev
+3.1. Connect to RMAN on Dev
+powershell
+Copy
+Edit
+rman target sys/ProdPass@PRODDB auxiliary sys/DevPass@DEVDB1
+3.2. Run the RMAN Active Duplicate Command
+rman
+Copy
+Edit
+DUPLICATE TARGET DATABASE TO 'DEVDB'
+  FROM ACTIVE DATABASE
+  SPFILE
+  SET DB_UNIQUE_NAME='DEVDB'
+  SET LOG_FILE_NAME_CONVERT='+DATA/PRODDB/redo01.log', '+DATA/DEVDB/redo01.log'
+  SET CONTROL_FILES='+DATA/DEVDB/control01.ctl','+FRA/DEVDB/control02.ctl'
+  SET DB_FILE_NAME_CONVERT='+DATA/PRODDB', '+DATA/DEVDB'
+  SET SGA_TARGET='4G'
+  SET PGA_AGGREGATE_TARGET='2G'
+  SET CLUSTER_DATABASE=TRUE
+  NOFILENAMECHECK;
+This process will: ✅ Copy data from Prod to Dev in real-time
+✅ Duplicate control files, redo logs, and datafiles
+✅ Update configuration dynamically
+
+🟠 Step 4: Post-Duplicate Configurations
+4.1. Enable Archive Mode & Flashback
+sql
+Copy
+Edit
+ALTER DATABASE FORCE LOGGING;
+ALTER DATABASE FLASHBACK ON;
+4.2. Verify the Database Role
+sql
+Copy
+Edit
+SELECT database_role FROM v$database;
+Expected Output:
+
+plaintext
+Copy
+Edit
+PRIMARY
+4.3. Check Datafiles & Redo Logs
+sql
+Copy
+Edit
+SELECT name FROM v$datafile;
+SELECT member FROM v$logfile;
+4.4. Open the Database
+rman
+Copy
+Edit
+ALTER DATABASE OPEN RESETLOGS;
+🔵 Step 5: Reconfigure RAC for Dev
+5.1. Register Database with CRS
+powershell
+Copy
+Edit
+srvctl add database -d DEVDB -o C:\oracle\product\19.0.0\dbhome_1
+5.2. Add Instances to Cluster
+powershell
+Copy
+Edit
+srvctl add instance -d DEVDB -i DEVDB1 -n DEVNODE1
+srvctl add instance -d DEVDB -i DEVDB2 -n DEVNODE2
+5.3. Start Database & Verify Status
+powershell
+Copy
+Edit
+srvctl start database -d DEVDB
+srvctl status database -d DEVDB
+🟢 Step 6: Final Validation
+6.1. Verify Cluster & Instance Status
+powershell
+Copy
+Edit
+crsctl stat res -t
+6.2. Verify Flash Recovery Area (FRA)
+sql
+Copy
+Edit
+SELECT name, space_used, space_limit FROM v$recovery_file_dest;
+6.3. Verify SCAN Listeners
+powershell
+Copy
+Edit
+srvctl status scan_listener
+🚀 Automating the Process
+You can schedule this RMAN refresh process to run monthly using Windows Task Scheduler:
+
+Create a Batch Script (refresh_dev.bat)
+powershell
+Copy
+Edit
+rman cmdfile=C:\scripts\refresh_dev.rman log=C:\scripts\refresh_dev.log
+Schedule the Task
+powershell
+Copy
+Edit
+schtasks /create /tn "DevDB_Refresh" /tr "C:\scripts\refresh_dev.bat" /sc monthly /st 02:00
+✅ Summary
+✔️ Zero downtime refresh of Dev RAC ASM from Prod RAC ASM
+✔️ Fully automated using RMAN Active Duplicate
+✔️ Ensures consistent & accurate database replication
+✔️ Minimal manual intervention required
+
+This ensures Dev is always refreshed with latest Prod data without affecting Production availability. 🚀
