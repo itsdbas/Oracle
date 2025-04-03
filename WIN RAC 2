@@ -1,0 +1,184 @@
+Step 1: Prerequisites
+Ensure the Oracle Client is installed and sqlplus is accessible.
+
+Set the ORACLE_HOME, TNS_ALIAS, and ensure connectivity with tnsnames.ora.
+
+Run PowerShell as Administrator to allow execution.
+
+Step 2: PowerShell Script
+Save this as DBA_RAC_Monitoring.ps1
+
+powershell
+Copy
+Edit
+# Oracle RAC DBA Daily Monitoring Script (Dynamic & Automated)
+# Author: DBA Team
+# Version: 2.0
+# Works on Windows with Oracle Client Installed
+
+# Auto-Detect Oracle Environment
+$ORACLE_HOME = $env:ORACLE_HOME
+if (-not $ORACLE_HOME) {
+    $ORACLE_HOME = "C:\oracle\product\19.0.0\dbhome_1"  # Update if required
+}
+$ORACLE_BIN = "$ORACLE_HOME\bin\sqlplus.exe"
+
+# Auto-fetch Oracle SID and Service
+$ORACLE_SID = "yourdb"
+$TNS_ALIAS = "your_rac_service"
+
+# Set Database Credentials (Modify if needed)
+$DB_USER = "sys"
+$DB_PASSWORD = "yourpassword"
+
+# Log File Setup
+$logFile = "C:\DBA_Logs\DBA_RAC_Monitoring_$(Get-Date -Format 'yyyyMMdd').log"
+if (!(Test-Path "C:\DBA_Logs")) { New-Item -ItemType Directory -Path "C:\DBA_Logs" | Out-Null }
+
+# Function to Execute SQL Queries
+function Execute-SQL {
+    param ([string]$sqlQuery)
+    $query = @"
+$sqlQuery
+exit
+"@
+    $result = $query | & $ORACLE_BIN -S "$DB_USER/$DB_PASSWORD@$TNS_ALIAS as sysdba"
+    Write-Host "`n$result" -ForegroundColor Green
+    Add-Content -Path $logFile -Value "`n$result"
+}
+
+# Check Cluster Status
+function Check-Cluster-Status {
+    Write-Host "Checking Oracle Cluster Status..." -ForegroundColor Yellow
+    Execute-SQL "SELECT inst_id, instance_name, status FROM gv\$instance;"
+}
+
+# Check Node Status
+function Check-Node-Status {
+    Write-Host "Checking Oracle RAC Node Status..." -ForegroundColor Yellow
+    Execute-SQL "SELECT node_name, status FROM gv\$cluster_interconnects;"
+}
+
+# Check Database Status
+function Check-Database-Status {
+    Write-Host "Checking Database Status..." -ForegroundColor Yellow
+    Execute-SQL "SELECT name, open_mode, database_role FROM v\$database;"
+}
+
+# Check ASM Disk Groups
+function Check-ASM-DiskGroups {
+    Write-Host "Checking ASM Disk Groups..." -ForegroundColor Yellow
+    Execute-SQL "SELECT group_number, name, state, total_mb, free_mb FROM v\$asm_diskgroup;"
+}
+
+# Check User Sessions
+function Check-User-Sessions {
+    Write-Host "Checking Active User Sessions..." -ForegroundColor Yellow
+    Execute-SQL "SELECT username, sid, serial#, machine, status FROM v\$session WHERE username IS NOT NULL;"
+}
+
+# Check FRA Usage
+function Check-FRA-Usage {
+    Write-Host "Checking Fast Recovery Area (FRA) Usage..." -ForegroundColor Yellow
+    Execute-SQL @"
+SELECT name, space_limit/1024/1024 AS total_mb, 
+       space_used/1024/1024 AS used_mb, 
+       space_reclaimable/1024/1024 AS reclaimable_mb 
+FROM v\$recovery_area_usage;
+"@
+}
+
+# Check Data Guard Status
+function Check-DataGuard-Status {
+    Write-Host "Checking Data Guard Status..." -ForegroundColor Yellow
+    Execute-SQL "SELECT database_role, protection_mode, transport_mode FROM v\$database;"
+}
+
+# Check Blocking Sessions
+function Check-Blocking-Sessions {
+    Write-Host "Checking for Blocking Sessions..." -ForegroundColor Yellow
+    Execute-SQL @"
+SELECT blocking_session, sid, serial#, wait_class, seconds_in_wait
+FROM v\$session WHERE blocking_session IS NOT NULL;
+"@
+}
+
+# Check Alert Logs
+function Check-Alert-Logs {
+    Write-Host "Checking Database Alert Logs (Last 10 Entries)..." -ForegroundColor Yellow
+    Execute-SQL "SELECT originating_timestamp, message_text FROM v\$diag_alert_ext ORDER BY originating_timestamp DESC FETCH FIRST 10 ROWS ONLY;"
+}
+
+# Check Tablespace Usage
+function Check-Tablespace-Usage {
+    Write-Host "Checking Tablespace Usage..." -ForegroundColor Yellow
+    Execute-SQL @"
+SELECT tablespace_name, file_name, bytes/1024/1024 AS size_mb, 
+       free_space/1024/1024 AS free_mb, 
+       round((free_space/bytes)*100, 2) AS free_pct
+FROM dba_data_files;
+"@
+}
+
+# Check Archive Logs
+function Check-Archive-Logs {
+    Write-Host "Checking Archive Log Usage..." -ForegroundColor Yellow
+    Execute-SQL "SELECT sequence#, applied, first_time, next_time FROM v\$archived_log ORDER BY sequence# DESC FETCH FIRST 10 ROWS ONLY;"
+}
+
+# Generate AWR Report
+function Generate-AWR-Report {
+    Write-Host "Generating AWR Report..." -ForegroundColor Yellow
+    Execute-SQL "BEGIN DBMS_WORKLOAD_REPOSITORY.create_snapshot(); END;"
+    Write-Host "AWR Snapshot created. Use AWR report script manually."
+}
+
+# Menu Display Function
+function Show-Menu {
+    Clear-Host
+    Write-Host "======================================" -ForegroundColor Cyan
+    Write-Host "       Oracle RAC DBA Monitoring      " -ForegroundColor Cyan
+    Write-Host "======================================" -ForegroundColor Cyan
+    Write-Host "1. Check Cluster Status"
+    Write-Host "2. Check Node Status"
+    Write-Host "3. Check Database Status"
+    Write-Host "4. Check ASM Disk Groups"
+    Write-Host "5. Check User Sessions"
+    Write-Host "6. Check FRA Usage"
+    Write-Host "7. Check Data Guard Status"
+    Write-Host "8. Check Blocking Sessions"
+    Write-Host "9. Check Alert Logs"
+    Write-Host "10. Check Tablespace Usage"
+    Write-Host "11. Check Archive Logs"
+    Write-Host "12. Generate AWR Report"
+    Write-Host "13. Run All Checks"
+    Write-Host "14. Exit"
+    Write-Host "======================================" -ForegroundColor Cyan
+}
+
+# Main Loop
+do {
+    Show-Menu
+    $choice = Read-Host "Enter your choice (1-14)"
+
+    switch ($choice) {
+        1 { Check-Cluster-Status }
+        2 { Check-Node-Status }
+        3 { Check-Database-Status }
+        4 { Check-ASM-DiskGroups }
+        5 { Check-User-Sessions }
+        6 { Check-FRA-Usage }
+        7 { Check-DataGuard-Status }
+        8 { Check-Blocking-Sessions }
+        9 { Check-Alert-Logs }
+        10 { Check-Tablespace-Usage }
+        11 { Check-Archive-Logs }
+        12 { Generate-AWR-Report }
+        13 { Check-Cluster-Status; Check-Node-Status; Check-Database-Status; Check-ASM-DiskGroups; Check-User-Sessions; Check-FRA-Usage; Check-DataGuard-Status; Check-Blocking-Sessions; Check-Alert-Logs; Check-Tablespace-Usage; Check-Archive-Logs }
+        14 { Write-Host "Exiting..."; exit }
+        default { Write-Host "Invalid choice, please try again." -ForegroundColor Red }
+    }
+
+    Start-Sleep -Seconds 3
+} while ($true)
+Improvements
