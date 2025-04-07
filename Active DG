@@ -1,0 +1,134 @@
+Perfect! Here's a complete step-by-step guide for manual and DGMGRL-based switchover and failover in an Oracle 2-node RAC with Active Data Guard configuration.
+
+🔧 ASSUMPTIONS:
+Primary DB: PRIMDB (2-node RAC)
+
+Standby DB: STBYDB (2-node RAC with Active Data Guard)
+
+Data Guard Broker is configured
+
+TNS entries configured for both
+
+You have sys/sysdba access
+
+✅ I. CHECK ENVIRONMENT
+sql
+Copy
+Edit
+-- On both PRIMARY and STANDBY
+SELECT DATABASE_ROLE, OPEN_MODE, PROTECTION_MODE FROM V$DATABASE;
+SELECT NAME, VALUE FROM V$PARAMETER WHERE NAME LIKE '%db_unique_name%';
+🔄 II. SWITCHOVER
+1. 💻 Manual Switchover Steps
+🅰️ On Primary (PRIMDB):
+sql
+Copy
+Edit
+-- Check readiness
+SELECT SWITCHOVER_STATUS FROM V$DATABASE;
+
+-- Begin switchover
+ALTER DATABASE COMMIT TO SWITCHOVER TO PHYSICAL STANDBY WITH SESSION SHUTDOWN;
+
+-- Shutdown and mount as standby
+SHUTDOWN IMMEDIATE;
+STARTUP MOUNT;
+🅱️ On Standby (STBYDB):
+sql
+Copy
+Edit
+-- Begin switchover to primary
+ALTER DATABASE COMMIT TO SWITCHOVER TO PRIMARY;
+
+-- Open the new primary
+ALTER DATABASE OPEN;
+🅰️ Back to Primary (now standby):
+sql
+Copy
+Edit
+-- Start MRP on new standby
+ALTER DATABASE RECOVER MANAGED STANDBY DATABASE DISCONNECT FROM SESSION;
+2. 🚀 DGMGRL-Based Switchover
+bash
+Copy
+Edit
+-- Connect to broker
+DGMGRL sys/password@PRIMDB
+
+-- Check configuration
+SHOW CONFIGURATION;
+SHOW DATABASE VERBOSE PRIMDB;
+SHOW DATABASE VERBOSE STBYDB;
+
+-- Perform switchover
+SWITCHOVER TO STBYDB;
+
+-- Exit and confirm
+SHOW CONFIGURATION;
+⚠️ III. FAILOVER
+1. 💻 Manual Failover Steps (when PRIMDB is unrecoverable)
+🅱️ On Standby (STBYDB):
+sql
+Copy
+Edit
+-- Convert standby to primary
+ALTER DATABASE RECOVER MANAGED STANDBY DATABASE FINISH;
+
+-- Activate standby
+ALTER DATABASE ACTIVATE STANDBY DATABASE;
+
+-- Open it
+SHUTDOWN IMMEDIATE;
+STARTUP;
+Note: Original Primary cannot be reinstated unless it's re-cloned.
+
+2. 🚀 DGMGRL-Based Failover
+bash
+Copy
+Edit
+-- Connect to broker
+DGMGRL sys/password@STBYDB
+
+-- Perform failover
+FAILOVER TO STBYDB;
+
+-- Check config
+SHOW CONFIGURATION;
+Optionally, use IMMEDIATE if you want to skip applying logs:
+
+bash
+Copy
+Edit
+FAILOVER TO STBYDB IMMEDIATE;
+🔁 IV. REINSTATE FAILED PRIMARY (if possible)
+Only in DGMGRL:
+
+bash
+Copy
+Edit
+-- Reinstate primary (after failover)
+REINSTATE DATABASE PRIMDB;
+Ensure PRIMDB is shutdown cleanly and ready in MOUNT state before doing this.
+
+🧰 USEFUL QUERIES
+sql
+Copy
+Edit
+-- Check apply lag
+SELECT NAME, VALUE, TIME_COMPUTED FROM V$DATAGUARD_STATS;
+
+-- Check real-time apply
+SELECT PROCESS, STATUS, THREAD#, SEQUENCE# FROM V$MANAGED_STANDBY;
+
+-- Log gap
+SELECT * FROM V$ARCHIVE_GAP;
+📝 NOTES:
+Ensure dg_broker_start = TRUE in both DBs.
+
+Switchover is safe & planned, failover is for disaster.
+
+RAC does not change how switchover/failover works in terms of commands.
+
+In RAC, you only need to connect via one node.
+
+Would you like a bash script version or automation with cron + shell + SQL*Plus for this too?
