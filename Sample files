@@ -1,0 +1,196 @@
+Sure! Below is a sample init.ora (PFILE) and instructions for the password file for a 2-node Oracle 19c RAC setup with ASM on Windows Server, useful for your RMAN Active Duplicate migration to the target RAC cluster.
+
+🧾 Sample init.ora File for Target RAC (NEWRAC)
+This file is used temporarily to startup NOMOUNT the auxiliary database before the duplicate begins.
+
+ini
+Copy
+Edit
+*.audit_file_dest='C:\app\oracle\admin\NEWRAC\adump'
+*.audit_trail='db'
+*.compatible='19.0.0'
+*.control_files='+DATA/NEWRAC/control01.ctl','+FRA/NEWRAC/control02.ctl'
+*.db_block_size=8192
+*.db_create_file_dest='+DATA'
+*.db_create_online_log_dest_1='+DATA'
+*.db_create_online_log_dest_2='+FRA'
+*.db_domain=''
+*.db_name='ORCL'
+*.db_unique_name='NEWRAC'
+*.diagnostic_dest='C:\app\oracle'
+*.dispatchers='(PROTOCOL=TCP) (SERVICE=ORCLXDB)'
+*.log_archive_dest_1='LOCATION=USE_DB_RECOVERY_FILE_DEST'
+*.log_archive_format='ARC_%t_%s_%r.arc'
+*.memory_target=4G
+*.open_cursors=300
+*.processes=300
+*.remote_login_passwordfile='EXCLUSIVE'
+*.undo_tablespace='UNDOTBS1'
+
+# Node-specific settings
+NEWRAC1.instance_number=1
+NEWRAC2.instance_number=2
+NEWRAC1.thread=1
+NEWRAC2.thread=2
+NEWRAC1.undo_tablespace='UNDOTBS1'
+NEWRAC2.undo_tablespace='UNDOTBS2'
+
+# Optional for RAC interconnect
+*.cluster_database=true
+*.cluster_interconnects='192.168.1.100'  -- Adjust to your private interconnect IP
+✅ Notes:
+db_name should match the source DB.
+
+db_unique_name should be different from the source.
+
+Set correct values for your ASM disk groups (e.g., +DATA, +FRA)
+
+You can also create one initNEWRAC1.ora and initNEWRAC2.ora if needed for specific nodes.
+
+🔐 Password File for RAC (Windows + ASM)
+In RAC, the same password file must be used on both nodes, and it must be located in a shared location (typically in ASM) or copied manually to both nodes.
+
+🔧 On Source Server:
+cmd
+Copy
+Edit
+orapwd file=%ORACLE_HOME%\database\PWDORCL.ora password=oracle entries=5 format=12
+🚚 Copy Password File to Target:
+Option 1: Use ASM (preferred)
+
+Use asmcmd or RMAN to copy into +DATA or +FRA.
+
+bash
+Copy
+Edit
+asmcmd
+cd +DATA/NEWRAC/PASSWORD/
+cp /tmp/PWDORCL.ora +DATA/NEWRAC/PASSWORD/PWDNEWRAC.ora
+Option 2: Copy to both nodes locally
+
+cmd
+Copy
+Edit
+copy PWDORCL.ora to C:\app\oracle\product\19.0.0\dbhome_1\database\PWDNEWRAC.ora
+📌 After Migration – Create SPFILE from PFILE
+sql
+Copy
+Edit
+CREATE SPFILE='+DATA/NEWRAC/spfileNEWRAC.ora' FROM PFILE='C:\tmp\init.ora';
+Then reconfigure with srvctl:
+
+cmd
+Copy
+Edit
+srvctl add database -db NEWRAC -oraclehome C:\app\oracle\product\19.0.0\dbhome_1 -spfile +DATA/NEWRAC/spfileNEWRAC.ora -dbname ORCL
+srvctl add instance -db NEWRAC -instance NEWRAC1 -node newrac1
+srvctl add instance -db NEWRAC -instance NEWRAC2 -node newrac2
+srvctl start database -db NEWRAC
+Let me know if you'd like a sample tnsnames.ora, listener setup, or any srvctl registration validation tips!
+
+
+
+
+
+
+
+You said:
+sample for tns enty and listner entry  for migration
+
+
+ChatGPT said:
+Sure! Here's a sample tnsnames.ora and listener.ora configuration to support Oracle 19c 2-node RAC migration using RMAN Active Duplicate—ideal for Windows Server with ASM.
+
+📘 tnsnames.ora Sample
+This should be configured on both source and target servers, and also on any host from where RMAN is run.
+
+ora
+Copy
+Edit
+# On both source and target nodes
+
+OLDRAC =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST=oldrac-scan)(PORT = 1521))
+    (CONNECT_DATA =
+      (SERVICE_NAME = ORCL)
+    )
+  )
+
+NEWRAC =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST=newrac-scan)(PORT = 1521))
+    (CONNECT_DATA =
+      (SERVICE_NAME = ORCL)
+    )
+  )
+
+NEWRAC1 =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST=newrac1-vip)(PORT = 1521))
+    (CONNECT_DATA =
+      (SERVICE_NAME = ORCL)
+      (INSTANCE_NAME = NEWRAC1)
+    )
+  )
+
+NEWRAC2 =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST=newrac2-vip)(PORT = 1521))
+    (CONNECT_DATA =
+      (SERVICE_NAME = ORCL)
+      (INSTANCE_NAME = NEWRAC2)
+    )
+  )
+🔹 Use VIPs or public hostnames based on your configuration.
+🔹 Make sure SCAN listeners are reachable (use tnsping to confirm).
+
+📕 listener.ora Sample (STATIC Entry for RMAN Active Duplicate)
+During RMAN Active Duplicate, you need a static listener entry for the auxiliary instance on the target server (NEWRAC1), because it's started in NOMOUNT and not yet registered with the listener dynamically.
+
+On target node newrac1:
+
+ora
+Copy
+Edit
+SID_LIST_LISTENER =
+  (SID_LIST =
+    (SID_DESC =
+      (GLOBAL_DBNAME = ORCL_DGMGRL)     -- optional if using DG setup
+      (ORACLE_HOME = C:\app\oracle\product\19.0.0\dbhome_1)
+      (SID_NAME = NEWRAC1)
+    )
+  )
+
+LISTENER =
+  (DESCRIPTION_LIST =
+    (DESCRIPTION =
+      (ADDRESS = (PROTOCOL = TCP)(HOST = newrac1-vip)(PORT = 1521))
+    )
+  )
+
+ADR_BASE_LISTENER = C:\app\oracle
+🔹 You may need to do this on both nodes if duplicating over both.
+
+✅ Post Changes – Restart Listener
+cmd
+Copy
+Edit
+lsnrctl stop
+lsnrctl start
+lsnrctl status
+✅ Validate TNS & Listener
+cmd
+Copy
+Edit
+tnsping OLDRAC
+tnsping NEWRAC
+And from RMAN:
+
+bash
+Copy
+Edit
+rman target sys@OLDRAC auxiliary sys@NEWRAC
+If successful, it will connect and allow you to begin the duplication.
+
+Let me know if you also want SCAN listener configuration samples, service creation (srvctl add service) or any troubleshooting tips during TNS/Listener setup!
